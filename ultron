@@ -1,0 +1,167 @@
+#!/bin/bash
+# ultron - Controlador CLI del asistente de voz Ultrón
+
+CONFIG_DIR="$HOME/.config/ultron-assistant"
+PID_FILE="$CONFIG_DIR/ultron.pid"
+LOG_FILE="$CONFIG_DIR/assistant.log"
+SCRIPT_PATH="$CONFIG_DIR/assistant.py"
+
+# Usar el Python del entorno virtual aislado si existe
+if [ -f "$CONFIG_DIR/.venv/bin/python3" ]; then
+    PYTHON_BIN="$CONFIG_DIR/.venv/bin/python3"
+elif command -v python3 &>/dev/null; then
+    PYTHON_BIN=$(command -v python3)
+else
+    PYTHON_BIN="/usr/bin/python3"
+fi
+
+get_pid() {
+    pgrep -f "assistant.py" | head -n 1
+}
+
+is_running() {
+    local pid=$(get_pid)
+    if [ -n "$pid" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+start_ultron() {
+    if is_running; then
+        local pid=$(get_pid)
+        echo "⚡ Ultrón ya está ACTIVO y escuchando en segundo plano (PID $pid)."
+        return 0
+    fi
+
+    if [ ! -f "$SCRIPT_PATH" ]; then
+        echo "❌ No se encontró $SCRIPT_PATH. Ejecuta primero el instalador: ./install.sh"
+        exit 1
+    fi
+
+    # Limpiar procesos huérfanos previos
+    pkill -9 -f "ffmpeg.*avfoundation" 2>/dev/null
+
+    nohup "$PYTHON_BIN" -u "$SCRIPT_PATH" > "$LOG_FILE" 2>&1 &
+    local new_pid=$!
+    echo "$new_pid" > "$PID_FILE"
+    
+    sleep 1.5
+    if is_running; then
+        echo "✅ Ultrón INICIADO correctamente en segundo plano (PID $(get_pid))."
+        echo "   Di 'Hey Ultrón' en cualquier momento para hablar."
+    else
+        echo "❌ Error al iniciar Ultrón. Revisa los logs con: ultron logs"
+    fi
+}
+
+stop_ultron() {
+    if ! is_running; then
+        echo "⚪ Ultrón ya está DESACTIVADO (no hay ningún proceso corriendo)."
+        pkill -9 -f "ffmpeg.*avfoundation" 2>/dev/null
+        rm -f "$PID_FILE" 2>/dev/null
+        return 0
+    fi
+
+    pkill -f "assistant.py" 2>/dev/null
+    sleep 0.5
+    pkill -9 -f "ffmpeg.*avfoundation" 2>/dev/null
+    rm -f "$PID_FILE" 2>/dev/null
+
+    echo "🛑 Ultrón ha sido DESACTIVADO por completo."
+    echo "   El micrófono ha sido liberado."
+}
+
+show_status() {
+    if is_running; then
+        local pid=$(get_pid)
+        local cpu=$(ps -p "$pid" -o %cpu | tail -n 1 | tr -d ' ')
+        local mem=$(ps -p "$pid" -o %mem | tail -n 1 | tr -d ' ')
+        local etime=$(ps -p "$pid" -o etime | tail -n 1 | tr -d ' ')
+        echo "=========================================="
+        echo " 🟢 ESTADO: ULTRÓN ESTÁ ACTIVO Y ESCUCHANDO"
+        echo "=========================================="
+        echo " • PID del proceso : $pid"
+        echo " • Tiempo activo   : $etime"
+        echo " • Uso de CPU / RAM: ${cpu}% CPU / ${mem}% RAM"
+        echo " • Palabra clave   : 'Hey Ultrón'"
+        echo " • Modo de ejecución: En segundo plano"
+        echo "------------------------------------------"
+        echo "Para desactivarlo: ultron off"
+        echo "Para ver registros : ultron logs"
+    else
+        echo "=========================================="
+        echo " ⚪ ESTADO: ULTRÓN ESTÁ DESACTIVADO"
+        echo "=========================================="
+        echo " No hay ningún proceso de escucha activo ni consumo de recursos."
+        echo "------------------------------------------"
+        echo "Para activarlo: ultron on"
+    fi
+}
+
+show_logs() {
+    if [ -f "$LOG_FILE" ]; then
+        echo "--- Últimas líneas de registro de Ultrón ---"
+        tail -n 25 "$LOG_FILE"
+    else
+        echo "No hay archivo de registro disponible aún."
+    fi
+}
+
+run_test() {
+    echo "🔍 Ejecutando autodiagnóstico de Ultrón..."
+    if [ ! -f "$PYTHON_BIN" ]; then
+        echo "❌ Entorno Python no encontrado en $PYTHON_BIN"
+        return 1
+    fi
+    "$PYTHON_BIN" -c "
+import os, sys, urllib.request, json
+port_file = os.path.expanduser('~/Library/Application Support/Antigravity/DevToolsActivePort')
+if not os.path.exists(port_file):
+    print('⚠️ Antigravity no tiene el puerto CDP activo. ¿Está la app abierta?')
+else:
+    with open(port_file) as f: port = f.read().splitlines()[0]
+    try:
+        urllib.request.urlopen(f'http://127.0.0.1:{port}/json', timeout=1.5)
+        print('✅ Conexión con Antigravity (CDP): Exitosa (puerto ' + str(port) + ')')
+    except Exception as e:
+        print('❌ Error contactando CDP de Antigravity:', e)
+"
+}
+
+case "$1" in
+    on|start|activar|iniciar)
+        start_ultron
+        ;;
+    off|stop|desactivar|apagar)
+        stop_ultron
+        ;;
+    status|estado|check)
+        show_status
+        ;;
+    logs|log)
+        show_logs
+        ;;
+    test|diagnostico|diag)
+        run_test
+        ;;
+    restart|reiniciar)
+        stop_ultron
+        sleep 1
+        start_ultron
+        ;;
+    *)
+        if is_running; then
+            show_status
+        else
+            echo "Uso: ultron {on|off|status|logs|test|restart}"
+            echo ""
+            echo "  ultron on      -> Activa a Ultrón en segundo plano"
+            echo "  ultron off     -> Desactiva y detiene a Ultrón por completo"
+            echo "  ultron status  -> Muestra el estado y consumo de recursos"
+            echo "  ultron logs    -> Muestra los registros recientes"
+            echo "  ultron test    -> Ejecuta el autodiagnóstico de conexión"
+        fi
+        ;;
+esac

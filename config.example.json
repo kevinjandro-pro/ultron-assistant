@@ -1,0 +1,10 @@
+{
+  "wake_words": ["hey ultron", "ey ultron", "oye ultron", "hola ultron", "ultron"],
+  "mic_preference": "auto",
+  "whisper_model": "tiny",
+  "vad_filter": true,
+  "beam_size": 1,
+  "threads": 2,
+  "min_amplitude": 0.008,
+  "feedback_chime": "/System/Library/Sounds/Glass.aiff"
+}
