@@ -160,31 +160,41 @@ if [[ ! -d "$TARGET_DIR/.venv" ]]; then
     python3 -m venv "$TARGET_DIR/.venv"
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+
+RAW_BASE="https://raw.githubusercontent.com/kevinjandro-pro/ultron-assistant/main"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+echo "Descargando / desplegando archivos del asistente..."
+if [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/assistant.py" ]]; then
+    cp "$SCRIPT_DIR/assistant.py" "$TARGET_DIR/assistant.py"
+    cp "$SCRIPT_DIR/requirements.txt" "$TARGET_DIR/requirements.txt"
+    if [[ ! -f "$TARGET_DIR/config.json" ]] && [[ -f "$SCRIPT_DIR/config.example.json" ]]; then
+        cp "$SCRIPT_DIR/config.example.json" "$TARGET_DIR/config.json"
+    fi
+    cp "$SCRIPT_DIR/ultron" "$BIN_DIR/ultron"
+else
+    echo "Descargando componentes desde GitHub ($RAW_BASE)..."
+    curl -fsSL "$RAW_BASE/assistant.py" -o "$TARGET_DIR/assistant.py"
+    curl -fsSL "$RAW_BASE/requirements.txt" -o "$TARGET_DIR/requirements.txt"
+    if [[ ! -f "$TARGET_DIR/config.json" ]]; then
+        curl -fsSL "$RAW_BASE/config.example.json" -o "$TARGET_DIR/config.json"
+    fi
+    curl -fsSL "$RAW_BASE/ultron" -o "$BIN_DIR/ultron"
+fi
+
+chmod +x "$TARGET_DIR/assistant.py"
+chmod +x "$BIN_DIR/ultron"
 
 echo "Instalando dependencias de Python (faster-whisper, websockets, numpy)..."
 "$TARGET_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$TARGET_DIR/.venv/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.txt"
-
-echo "Copiando scripts del asistente..."
-cp "$SCRIPT_DIR/assistant.py" "$TARGET_DIR/assistant.py"
-chmod +x "$TARGET_DIR/assistant.py"
-
-if [[ ! -f "$TARGET_DIR/config.json" ]]; then
-    if [[ -f "$SCRIPT_DIR/config.example.json" ]]; then
-        cp "$SCRIPT_DIR/config.example.json" "$TARGET_DIR/config.json"
-    fi
-fi
+"$TARGET_DIR/.venv/bin/pip" install --quiet -r "$TARGET_DIR/requirements.txt"
 
 # ------------------------------------------------------------------------------
-# 6. Instalación del Comando CLI (ultron)
+# 6. Verificación del Comando CLI (ultron) en PATH
 # ------------------------------------------------------------------------------
-echo -e "\n${BOLD}[Fase 5/5] Instalando comando CLI 'ultron'...${NC}"
-
-BIN_DIR="$HOME/.local/bin"
-mkdir -p "$BIN_DIR"
-cp "$SCRIPT_DIR/ultron" "$BIN_DIR/ultron"
-chmod +x "$BIN_DIR/ultron"
+echo -e "\n${BOLD}[Fase 5/5] Verificando comando CLI 'ultron' en PATH...${NC}"
 
 # Asegurar que ~/.local/bin esté en PATH
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
