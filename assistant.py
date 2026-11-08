@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ultrón Assistant - Centinela de voz autónomo para Antigravity
+Ultrón. Control de voz - Exclusivo para Antigravity
 Escucha en segundo plano y activa llamadas de voz por CDP ante la palabra clave.
 """
 

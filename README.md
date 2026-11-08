@@ -1,6 +1,9 @@
-# 🤖 Ultrón Assistant para Antigravity
+# 🎙️ Ultrón. Control de voz
 
-Centinela de voz autónomo y ultraligero (<1% CPU en reposo) para **Antigravity**. Escucha en segundo plano desde el micrófono de tu Mac y, al detectar **"Hey Ultrón"**, despierta instantáneamente la llamada de voz de Antigravity vía Chrome DevTools Protocol (CDP) sin colisiones de audio.
+> [!IMPORTANT]
+> **Compatibilidad:** Diseñado **única y exclusivamente para Antigravity** en macOS. No es compatible con otros entornos o navegadores estándar, ya que se acopla directamente al protocolo CDP interno de Antigravity.
+
+Sistema autónomo y ultraligero (<1% CPU en reposo) de **control de voz para Antigravity**. Escucha en segundo plano desde el micrófono de tu Mac y, al detectar **"Hey Ultrón"**, despierta instantáneamente la llamada de voz nativa de Antigravity vía Chrome DevTools Protocol (CDP) sin colisiones de hardware.
 
 ---
 

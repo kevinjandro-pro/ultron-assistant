@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Instalador Determinista e Interactivo: Ultrón Assistant para Antigravity
+# Instalador: Ultrón. Control de voz
+# COMPATIBILIDAD: Exclusivo para Antigravity en macOS
 # Protocolo de Cero Suposiciones (Zero-Assumption Protocol)
 # ==============================================================================
 
@@ -15,7 +16,8 @@ NC="\033[0m"
 
 echo -e "${BLUE}${BOLD}"
 echo "=========================================================="
-echo "    🚀 INSTALADOR AUTÓNOMO: CENTINELA 'HEY ULTRÓN'      "
+echo "    🎙️  ULTRÓN. CONTROL DE VOZ                          "
+echo "    ⚡ Compatibilidad: Exclusivo para Antigravity        "
 echo "=========================================================="
 echo -e "${NC}"
 

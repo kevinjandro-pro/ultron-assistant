@@ -1,5 +1,5 @@
 #!/bin/bash
-# ultron - Controlador CLI del asistente de voz Ultrón
+# ultron - CLI de "Ultrón. Control de voz" (Exclusivo para Antigravity)
 
 CONFIG_DIR="$HOME/.config/ultron-assistant"
 PID_FILE="$CONFIG_DIR/ultron.pid"
