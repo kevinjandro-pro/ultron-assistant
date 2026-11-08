@@ -8,12 +8,12 @@ Centinela de voz autónomo y ultraligero (<1% CPU en reposo) para **Antigravity*
 
 ### Método A: Directo desde la Nube (curl)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tu-usuario/ultron-assistant/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kevinjandro-pro/ultron-assistant/main/install.sh | bash
 ```
 
 ### Método B: Clonar Repositorio
 ```bash
-git clone https://github.com/tu-usuario/ultron-assistant.git
+git clone https://github.com/kevinjandro-pro/ultron-assistant.git
 cd ultron-assistant
 ./install.sh
 ```
