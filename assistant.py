@@ -34,7 +34,8 @@ DEFAULT_CONFIG = {
     "vad_filter": True,
     "beam_size": 1,
     "threads": 2,
-    "min_amplitude": 0.008,
+    "min_amplitude": 0.009,
+    "cooldown_seconds": 3.5,
     "feedback_chime": "/System/Library/Sounds/Glass.aiff"
 }
 
@@ -65,17 +66,12 @@ FFMPEG_BIN = find_binary("ffmpeg", [
     os.path.expanduser("~/.local/bin/ffmpeg")
 ])
 
-SWITCH_AUDIO_BIN = find_binary("SwitchAudioSource", [
-    "/opt/homebrew/bin/SwitchAudioSource",
-    "/usr/local/bin/SwitchAudioSource",
-    os.path.expanduser("~/.local/bin/SwitchAudioSource")
-])
-
 EXCLUDE_KEYWORDS = ["mts", "speaker", "parlante", "caixa", "nexus", "hdmi", "display", "screen"]
 INTERNAL_KEYWORDS = ["macbook", "built-in", "embutido", "interno", "micrófono", "microfone"]
 
+# Coincidencia precisa que tolera variaciones fonéticas comunes de Whisper ("hay ultrón", "eh ultrón", "un tron", "ultrón")
 WAKE_PATTERN = re.compile(
-    r'\b(hey|ey|oye|hola|ok)\s+(ultr[oó]n|el\s*tr[oó]n|oltr[oó]n|altr[oó]n|utr[oó]n|eltr[oó]n)\b',
+    r'\b(hey|ey|ay|hay|eh|e\s*y|oye|hola|ok)?\s*(ultr[oó]n|el\s*tr[oó]n|un\s*tr[oó]n|outron|altron)\b',
     re.IGNORECASE
 )
 
@@ -144,36 +140,8 @@ def get_cdp_port():
             pass
     return None
 
-async def _check_voice_active_async():
-    port = get_cdp_port()
-    if not port:
-        return False
-    try:
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/json")
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            targets = json.loads(resp.read().decode())
-        page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
-        if not page:
-            return False
-        async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2) as ws:
-            expr = "!!document.querySelector('[data-testid=\"voice-call-controls\"]')"
-            cmd = {'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': expr, 'returnByValue': True}}
-            await ws.send(json.dumps(cmd))
-            res = await ws.recv()
-            return bool(json.loads(res).get('result', {}).get('result', {}).get('value', False))
-    except Exception:
-        return False
-
-def check_voice_active():
-    try:
-        return asyncio.run(_check_voice_active_async())
-    except Exception:
-        return False
-
 async def _activate_antigravity_voice_async():
-    subprocess.run(["osascript", "-e", 'tell application "Antigravity" to activate'],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
+    # Nota: NO usamos osascript para activar la ventana para no robar el foco de lo que hace el usuario
     port = get_cdp_port()
     if not port:
         print("[!] No se pudo obtener el puerto CDP de Antigravity.", flush=True)
@@ -189,58 +157,34 @@ async def _activate_antigravity_voice_async():
             return False, "no_page"
         
         async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=3.0) as ws:
-            start_expr = '''
+            activate_expr = '''
                 (() => {
                     const controls = document.querySelector('[data-testid="voice-call-controls"]');
-                    if (controls) return { status: 'already_active' };
                     const startBtn = document.querySelector('[data-testid="voice-start-button"]');
-                    if (startBtn) {
+                    const muteBtn = document.querySelector('[data-testid="voice-mute-button"]');
+                    
+                    if (!controls && startBtn) {
                         startBtn.click();
-                        return { status: 'clicked_start' };
+                        return { action: 'clicked_start' };
                     }
-                    return { status: 'no_button' };
+                    if (controls && muteBtn) {
+                        const aria = muteBtn.getAttribute('aria-label') || '';
+                        if (aria === 'Unmute mic' || muteBtn.className.includes('bg-red')) {
+                            muteBtn.click();
+                            return { action: 'unmuted' };
+                        }
+                        return { action: 'already_active_unmuted' };
+                    }
+                    return { action: 'no_controls_found' };
                 })()
             '''
-            cmd = {'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': start_expr, 'returnByValue': True}}
+            cmd = {'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': activate_expr, 'returnByValue': True}}
             await ws.send(json.dumps(cmd))
             res = await ws.recv()
             val = json.loads(res).get('result', {}).get('result', {}).get('value', {})
-            initial_status = val.get('status')
-            
-            controls_found = False
-            unmuted = False
-            for _ in range(15):
-                unmute_expr = '''
-                    (() => {
-                        const controls = document.querySelector('[data-testid="voice-call-controls"]');
-                        if (!controls) return { hasControls: false };
-                        const muteBtn = document.querySelector('[data-testid="voice-mute-button"]');
-                        let didUnmute = false;
-                        if (muteBtn && (muteBtn.getAttribute('aria-label') === 'Unmute mic' || muteBtn.className.includes('bg-red'))) {
-                            muteBtn.click();
-                            didUnmute = true;
-                        }
-                        return {
-                            hasControls: true,
-                            didUnmute: didUnmute
-                        };
-                    })()
-                '''
-                cmd = {'id': 2, 'method': 'Runtime.evaluate', 'params': {'expression': unmute_expr, 'returnByValue': True}}
-                await ws.send(json.dumps(cmd))
-                res = await ws.recv()
-                u_val = json.loads(res).get('result', {}).get('result', {}).get('value', {})
-                if u_val.get('hasControls'):
-                    controls_found = True
-                    unmuted = u_val.get('didUnmute')
-                    break
-                await asyncio.sleep(0.2)
-                
-            if controls_found:
-                play_chime()
-                return True, f"active (unmuted={unmuted}, initial={initial_status})"
-            
-            return False, initial_status or "controls_timeout"
+            action = val.get('action', 'done')
+            play_chime()
+            return True, action
             
     except Exception as e:
         print(f"[!] Error conectando con CDP de Antigravity: {e}", flush=True)
@@ -265,7 +209,7 @@ def main():
     with open(PID_FILE, "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
         
-    print("[*] Centinela Ultrón (Headless CLI Mode) iniciado...", flush=True)
+    print("[*] Ultrón. Control de voz (Segundo plano) iniciado...", flush=True)
     mic_device = get_best_audio_device()
     print(f"[*] Dispositivo vinculado: {mic_device}", flush=True)
     
@@ -311,12 +255,14 @@ def main():
     t = threading.Thread(target=audio_reader_thread, daemon=True)
     t.start()
 
-    min_amp = CONFIG.get("min_amplitude", 0.008)
-    print(f"[✓] Centinela activo y escuchando. Di 'Hey Ultrón'.", flush=True)
+    min_amp = CONFIG.get("min_amplitude", 0.009)
+    cooldown_secs = CONFIG.get("cooldown_seconds", 3.5)
+    print(f"[✓] Centinela activo y escuchando. Di 'Hey Ultrón' o 'Ultrón'.", flush=True)
 
     try:
         last_eval_time = time.time()
         last_heartbeat = time.time()
+        cooldown_until = 0.0
 
         while running:
             time.sleep(0.15)
@@ -334,7 +280,10 @@ def main():
                 print(f"[*] Latido: activo (MaxAmp: {max_amp:.4f})...", flush=True)
                 last_heartbeat = now
                 
-            if now - last_eval_time < 0.9:
+            if now < cooldown_until:
+                continue
+                
+            if now - last_eval_time < 0.8:
                 continue
                 
             if max_amp < min_amp:
@@ -347,7 +296,7 @@ def main():
                     audio_data,
                     language="es",
                     beam_size=CONFIG.get("beam_size", 1),
-                    initial_prompt=None,
+                    initial_prompt="Ultrón.",
                     vad_filter=CONFIG.get("vad_filter", True)
                 )
                 text = " ".join([s.text for s in segments]).strip().lower()
@@ -360,31 +309,16 @@ def main():
                 
                 if is_match:
                     print(f"[!] ¡WAKE-WORD DETECTADA ('{clean_text}')! Activando voz de Antigravity...", flush=True)
-                    
-                    if current_proc:
-                        try:
-                            current_proc.terminate()
-                        except Exception:
-                            pass
-                        current_proc = None
                     with ring_lock:
                         audio_ring.clear()
                     
                     ok, status = activate_antigravity_voice()
                     print(f"[*] Resultado activación Antigravity: {status} (ok={ok})", flush=True)
                     
-                    time.sleep(1.0)
-                    while running and check_voice_active():
-                        time.sleep(2.0)
-                        
-                    if running:
-                        print("[✓] Antigravity Voice finalizado. Reiniciando centinela...", flush=True)
-                        current_proc = start_ffmpeg_pipe(mic_device)
-                        with ring_lock:
-                            audio_ring.clear()
-                        last_eval_time = time.time()
-                        last_heartbeat = time.time()
-                        print("[✓] Centinela listo de nuevo.", flush=True)
+                    cooldown_until = time.time() + cooldown_secs
+                    last_eval_time = time.time()
+                    last_heartbeat = time.time()
+                    print("[✓] Centinela listo y escuchando en segundo plano.", flush=True)
             except Exception as ex:
                 print(f"[!] Error procesando audio: {ex}", flush=True)
 
