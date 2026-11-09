@@ -109,6 +109,52 @@ show_logs() {
     fi
 }
 
+end_voice_call() {
+    "$PYTHON_BIN" -c "
+import urllib.request, json, asyncio, websockets, os
+
+port_file = os.path.expanduser('~/Library/Application Support/Antigravity/DevToolsActivePort')
+if not os.path.exists(port_file):
+    print('❌ Antigravity no está abierto.')
+    exit(1)
+
+with open(port_file) as f: port = int(f.read().splitlines()[0])
+
+try:
+    req = urllib.request.Request(f'http://127.0.0.1:{port}/json')
+    with urllib.request.urlopen(req, timeout=1.5) as resp: targets = json.loads(resp.read().decode())
+    page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
+    if not page:
+        print('❌ No se encontró la ventana activa de Antigravity.')
+        exit(1)
+
+    async def end():
+        async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2) as ws:
+            expr = '''
+            (() => {
+                const endBtn = document.querySelector('[data-testid=\"voice-call-end\"]') ||
+                               document.querySelector('[data-testid=\"voice-end-button\"]');
+                if (endBtn) {
+                    endBtn.click();
+                    return { ended: true };
+                }
+                return { ended: false };
+            })()
+            '''
+            await ws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': expr, 'returnByValue': True}}))
+            res = await ws.recv()
+            val = json.loads(res).get('result', {}).get('result', {}).get('value', {})
+            if val.get('ended'):
+                print('🛑 Llamada de voz de Antigravity finalizada.')
+            else:
+                print('ℹ️ No hay ninguna llamada de voz activa para cerrar.')
+
+    asyncio.run(end())
+except Exception as e:
+    print('❌ Error al finalizar llamada:', e)
+"
+}
+
 run_test() {
     echo "🔍 Ejecutando autodiagnóstico de Ultrón..."
     if [ ! -f "$PYTHON_BIN" ]; then
@@ -137,6 +183,9 @@ case "$1" in
     off|stop|desactivar|apagar)
         stop_ultron
         ;;
+    end|stop-call|hangup|colgar|cerrar)
+        end_voice_call
+        ;;
     status|estado|check)
         show_status
         ;;
@@ -155,10 +204,11 @@ case "$1" in
         if is_running; then
             show_status
         else
-            echo "Uso: ultron {on|off|status|logs|test|restart}"
+            echo "Uso: ultron {on|off|end|status|logs|test|restart}"
             echo ""
             echo "  ultron on      -> Activa a Ultrón en segundo plano"
             echo "  ultron off     -> Desactiva y detiene a Ultrón por completo"
+            echo "  ultron end     -> Finaliza la llamada de voz activa en Antigravity"
             echo "  ultron status  -> Muestra el estado y consumo de recursos"
             echo "  ultron logs    -> Muestra los registros recientes"
             echo "  ultron test    -> Ejecuta el autodiagnóstico de conexión"

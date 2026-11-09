@@ -37,10 +37,19 @@ Una vez instalado, controla a Ultrón desde cualquier parte de tu terminal:
 | :--- | :--- |
 | `ultron on` | Inicia la escucha en segundo plano como centinela invisible. |
 | `ultron off` | Detiene el centinela por completo y libera el micrófono. |
+| `ultron end` | Finaliza inmediatamente la llamada de voz activa en Antigravity. |
 | `ultron status` | Muestra estado en tiempo real, PID, tiempo activo y consumo de CPU/RAM. |
 | `ultron logs` | Muestra los últimos eventos y transcripciones de escucha. |
 | `ultron test` | Ejecuta un autodiagnóstico de conexión con Antigravity. |
 | `ultron restart` | Reinicia el centinela. |
+
+---
+
+## ⌨️ Atajo de Teclado Integrado (Colgar / End Call)
+
+- **`Option + Shift + E`** (o `Alt + Shift + E`): Cierra y finaliza de inmediato la sesión de voz pulsando internamente el botón rojo **"End"** (`voice-call-end`) sin colisiones de texto ni confirmaciones.
+- Funciona de forma automática y persistente dentro de la ventana de Antigravity.
+- También puedes asignar el comando `ultron end` a un atajo global de macOS mediante Raycast, Alfred o la app Atajos del sistema.
 
 ---
 

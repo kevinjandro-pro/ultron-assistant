@@ -190,6 +190,47 @@ async def _activate_antigravity_voice_async():
         print(f"[!] Error conectando con CDP de Antigravity: {e}", flush=True)
         return False, str(e)
 
+def ensure_shortcut_listener():
+    port = get_cdp_port()
+    if not port:
+        return
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/json")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            targets = json.loads(resp.read().decode())
+        page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
+        if not page:
+            return
+        
+        async def _install():
+            async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2.0) as ws:
+                js_code = '''
+                (() => {
+                    if (window.__ultronKeyHandlerInstalled) return;
+                    window.__ultronKeyHandlerInstalled = true;
+                    window.addEventListener('keydown', (e) => {
+                        if (e.altKey && e.shiftKey && (e.code === 'KeyE' || (e.key && e.key.toLowerCase() === 'e'))) {
+                            const endBtn = document.querySelector('[data-testid="voice-call-end"]') ||
+                                           document.querySelector('[data-testid="voice-end-button"]');
+                            if (endBtn) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                endBtn.click();
+                            }
+                        }
+                    }, true);
+                })()
+                '''
+                await ws.send(json.dumps({'id': 1, 'method': 'Page.addScriptToEvaluateOnNewDocument', 'params': {'source': js_code}}))
+                await ws.recv()
+                await ws.send(json.dumps({'id': 2, 'method': 'Runtime.evaluate', 'params': {'expression': js_code}}))
+                await ws.recv()
+
+        asyncio.run(_install())
+        print("[✓] Atajo Option + Shift + E inyectado y activo en Antigravity.", flush=True)
+    except Exception:
+        pass
+
 def activate_antigravity_voice():
     try:
         return asyncio.run(_activate_antigravity_voice_async())
@@ -210,6 +251,7 @@ def main():
         f.write(str(os.getpid()))
         
     print("[*] Ultrón. Control de voz (Segundo plano) iniciado...", flush=True)
+    ensure_shortcut_listener()
     mic_device = get_best_audio_device()
     print(f"[*] Dispositivo vinculado: {mic_device}", flush=True)
     
