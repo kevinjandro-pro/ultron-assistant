@@ -25,6 +25,9 @@ os.makedirs(CONFIG_DIR, exist_ok=True)
 PID_FILE = os.path.join(CONFIG_DIR, "ultron.pid")
 LOG_FILE = os.path.join(CONFIG_DIR, "assistant.log")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
+OVERLAY_BIN = os.path.join(CONFIG_DIR, "ultron-overlay")
+OVERLAY_PID_FILE = os.path.join(CONFIG_DIR, "overlay.pid")
 
 # Escala visual de sensibilidad (1 al 10):
 # 10: Hipersensible (0.008) -> Capta hasta susurros lejanos o audio muy bajo.
@@ -307,6 +310,91 @@ def activate_antigravity_voice():
     except Exception as e:
         return False, str(e)
 
+def update_state(voice_active=None, ultron_running=None):
+    state = {"voice_active": False, "ultron_running": True}
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            pass
+    if voice_active is not None:
+        state["voice_active"] = bool(voice_active)
+    if ultron_running is not None:
+        state["ultron_running"] = bool(ultron_running)
+    state["updated_at"] = time.time()
+    try:
+        tmp_file = STATE_FILE + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_file, STATE_FILE)
+    except Exception:
+        pass
+
+def ensure_overlay_running():
+    if not os.path.exists(OVERLAY_BIN) or not os.access(OVERLAY_BIN, os.X_OK):
+        source_file = os.path.join(CONFIG_DIR, "overlay", "main.swift")
+        if os.path.exists(source_file) and shutil.which("swiftc"):
+            try:
+                print("[*] Compilando ultron-overlay nativo en Swift...", flush=True)
+                subprocess.run(["swiftc", "-O", source_file, "-o", OVERLAY_BIN], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                return None
+    if not os.path.exists(OVERLAY_BIN):
+        return None
+        
+    if os.path.exists(OVERLAY_PID_FILE):
+        try:
+            with open(OVERLAY_PID_FILE, "r") as f:
+                opid = int(f.read().strip())
+            os.kill(opid, 0)
+            return opid
+        except Exception:
+            pass
+    try:
+        proc = subprocess.Popen([OVERLAY_BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(OVERLAY_PID_FILE, "w", encoding="utf-8") as f:
+            f.write(str(proc.pid))
+        print(f"[✓] Overlay visual nativo activo (PID {proc.pid}).", flush=True)
+        return proc.pid
+    except Exception as e:
+        print(f"[!] No se pudo iniciar el overlay: {e}", flush=True)
+        return None
+
+def stop_overlay():
+    if os.path.exists(OVERLAY_PID_FILE):
+        try:
+            with open(OVERLAY_PID_FILE, "r") as f:
+                opid = int(f.read().strip())
+            os.kill(opid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            os.remove(OVERLAY_PID_FILE)
+        except Exception:
+            pass
+    subprocess.run(["pkill", "-f", "ultron-overlay"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+async def _check_antigravity_voice_active():
+    port = get_cdp_port()
+    if not port:
+        return False
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/json")
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            targets = json.loads(resp.read().decode())
+        page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
+        if not page:
+            return False
+        async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=1.0) as ws:
+            expr = "!!(document.querySelector('[data-testid=\"voice-call-end\"]') || document.querySelector('[data-testid=\"voice-end-button\"]'))"
+            cmd = {'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': expr, 'returnByValue': True}}
+            await ws.send(json.dumps(cmd))
+            res = await ws.recv()
+            return bool(json.loads(res).get('result', {}).get('result', {}).get('value', False))
+    except Exception:
+        return False
+
 def start_ffmpeg_pipe(mic_device):
     cmd = [
         FFMPEG_BIN, "-loglevel", "error",
@@ -321,7 +409,9 @@ def main():
         f.write(str(os.getpid()))
         
     print("[*] Ultrón. Control de voz (Segundo plano) iniciado...", flush=True)
+    update_state(voice_active=False, ultron_running=True)
     ensure_shortcut_listener()
+    ensure_overlay_running()
     mic_device = get_best_audio_device()
     print(f"[*] Dispositivo vinculado: {mic_device}", flush=True)
     
@@ -366,6 +456,25 @@ def main():
 
     t = threading.Thread(target=audio_reader_thread, daemon=True)
     t.start()
+
+    def state_monitor_thread():
+        nonlocal running
+        current_state = False
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        while running:
+            time.sleep(0.6)
+            try:
+                active = loop.run_until_complete(_check_antigravity_voice_active())
+                if active != current_state:
+                    current_state = active
+                    update_state(voice_active=active)
+            except Exception:
+                pass
+        loop.close()
+
+    t_monitor = threading.Thread(target=state_monitor_thread, daemon=True)
+    t_monitor.start()
 
     sens_level = CONFIG.get("sensitivity_level", 6)
     min_amp = SENSITIVITY_MAP.get(sens_level, CONFIG.get("min_amplitude", 0.050))
@@ -438,6 +547,8 @@ def main():
 
     finally:
         running = False
+        update_state(voice_active=False, ultron_running=False)
+        stop_overlay()
         if current_proc:
             try:
                 current_proc.terminate()

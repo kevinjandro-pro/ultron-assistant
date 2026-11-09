@@ -59,6 +59,18 @@ Una vez instalado, controla a Ultrón desde cualquier parte de tu terminal:
 
 ---
 
+## 🌊 Indicador Visual Flotante (Always-On-Top SiriWave)
+
+Ultrón incluye un **overlay nativo en Swift (`ultron-overlay`)** con aceleración por hardware WebGL:
+- **Ubicación:** Esquina inferior derecha de tu pantalla principal.
+- **Activación Inteligente:**
+  - Aparece **únicamente** cuando una llamada de voz está activa y te encuentras trabajando en otra ventana/aplicación (IDE, navegador, terminal, Figma).
+  - Al hacer clic o volver al frente de Antigravity, el efecto **se desvanece de inmediato** para no estorbar tu área de trabajo.
+- **Click-Through Absoluto (`ignoresMouseEvents = true`):** Los clics del ratón atraviesan el panel directamente hacia tus aplicaciones subyacentes sin interferir nunca con tu flujo de trabajo.
+- **Consumo Cero (0.0% CPU / 0.0% GPU en reposo):** Cuando estás en Antigravity o la voz está inactiva, la ventana se oculta (`orderOut:`) y el bucle de animación se congela por completo.
+
+---
+
 ## ⚙️ Configuración Personalizada
 
 Puedes ajustar la sensibilidad o cambiar las palabras clave en `~/.config/ultron-assistant/config.json`:

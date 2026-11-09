@@ -176,6 +176,10 @@ if [[ -n "$SCRIPT_DIR" ]] && [[ -f "$SCRIPT_DIR/assistant.py" ]]; then
         cp "$SCRIPT_DIR/config.example.json" "$TARGET_DIR/config.json"
     fi
     cp "$SCRIPT_DIR/ultron" "$BIN_DIR/ultron"
+    if [[ -d "$SCRIPT_DIR/overlay" ]]; then
+        mkdir -p "$TARGET_DIR/overlay"
+        cp -r "$SCRIPT_DIR/overlay/"* "$TARGET_DIR/overlay/"
+    fi
 else
     echo "Descargando componentes desde GitHub ($RAW_BASE)..."
     curl -fsSL "$RAW_BASE/assistant.py" -o "$TARGET_DIR/assistant.py"
@@ -184,6 +188,18 @@ else
         curl -fsSL "$RAW_BASE/config.example.json" -o "$TARGET_DIR/config.json"
     fi
     curl -fsSL "$RAW_BASE/ultron" -o "$BIN_DIR/ultron"
+    mkdir -p "$TARGET_DIR/overlay"
+    curl -fsSL "$RAW_BASE/overlay/index.html" -o "$TARGET_DIR/overlay/index.html"
+    curl -fsSL "$RAW_BASE/overlay/main.swift" -o "$TARGET_DIR/overlay/main.swift"
+    curl -fsSL "$RAW_BASE/overlay/build.sh" -o "$TARGET_DIR/overlay/build.sh"
+    chmod +x "$TARGET_DIR/overlay/build.sh"
+fi
+
+# Compilar overlay nativo si swiftc está disponible
+if command -v swiftc &>/dev/null && [[ -f "$TARGET_DIR/overlay/main.swift" ]]; then
+    echo "Compilando overlay visual nativo en Swift (Always-On-Top)..."
+    swiftc -O "$TARGET_DIR/overlay/main.swift" -o "$TARGET_DIR/ultron-overlay" 2>/dev/null || true
+    chmod +x "$TARGET_DIR/ultron-overlay" 2>/dev/null || true
 fi
 
 chmod +x "$TARGET_DIR/assistant.py"
