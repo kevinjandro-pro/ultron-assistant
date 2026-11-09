@@ -75,10 +75,21 @@ stop_ultron() {
 }
 
 show_status() {
-    local sens="6/10 (Equilibrada)"
+    local sens="6/10"
+    local amp="0.050"
     if [ -f "$CONFIG_PATH" ]; then
-        local s=$("$PYTHON_BIN" -c "import json; print(json.load(open('$CONFIG_PATH')).get('sensitivity_level', 6))" 2>/dev/null)
-        if [ -n "$s" ]; then sens="$s/10"; fi
+        local info=$("$PYTHON_BIN" -c "
+import json
+try:
+    cfg = json.load(open('$CONFIG_PATH'))
+    lvl = cfg.get('sensitivity_level', 6)
+    amp = cfg.get('min_amplitude', 0.050)
+    print(f'{lvl}|{amp:.3f}')
+except Exception:
+    print('6|0.050')
+" 2>/dev/null)
+        sens="$(echo "$info" | cut -d'|' -f1)/10"
+        amp="$(echo "$info" | cut -d'|' -f2)"
     fi
 
     if is_running; then
@@ -92,9 +103,9 @@ show_status() {
         echo " • PID del proceso : $pid"
         echo " • Tiempo activo   : $etime"
         echo " • Uso de CPU / RAM: ${cpu}% CPU / ${mem}% RAM"
-        echo " • Sensibilidad    : Nivel $sens"
+        echo " • Sensibilidad    : Nivel $sens (Umbral de amplitud: $amp)"
         echo " • Palabra clave   : 'Hey Ultrón' / 'Ultrón'"
-        echo " • Atajo teclado   : Option + Shift + E (Conmutador ON/OFF)"
+        echo " • Atajo teclado   : Option + Shift + E (Conmutador ON/OFF split-aware)"
         echo " • Modo ejecución  : En segundo plano"
         echo "------------------------------------------"
         echo "Para desactivarlo  : ultron off"
@@ -104,7 +115,7 @@ show_status() {
         echo " ⚪ ESTADO: ULTRÓN ESTÁ DESACTIVADO"
         echo "=========================================="
         echo " No hay ningún proceso de escucha activo ni consumo de recursos."
-        echo " • Sensibilidad config: Nivel $sens"
+        echo " • Sensibilidad config: Nivel $sens (Umbral: $amp)"
         echo "------------------------------------------"
         echo "Para activarlo: ultron on"
     fi
@@ -142,28 +153,49 @@ try:
         async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2) as ws:
             expr = '''
             (() => {
-                const endBtn = document.querySelector('[data-testid=\"voice-call-end\"]') ||
+                function getTargetChatScope() {
+                    const panes = Array.from(document.querySelectorAll('[data-pane-id]')).filter(p => 
+                        p.querySelector('[data-testid=\"voice-start-button\"]') || 
+                        p.querySelector('[data-testid=\"voice-call-end\"]') ||
+                        p.querySelector('[data-testid=\"voice-call-controls\"]')
+                    );
+                    if (!panes.length) return document;
+                    const focusedPane = panes.find(p => p.contains(document.activeElement));
+                    if (focusedPane) return focusedPane;
+                    const activePane = panes.find(p => !p.hasAttribute('data-pane-unfocused') && !p.closest('[data-pane-unfocused]'));
+                    if (activePane) return activePane;
+                    return panes[0] || document;
+                }
+
+                const scope = getTargetChatScope();
+                const paneId = (scope.getAttribute && scope.getAttribute('data-pane-id')) || 'default';
+
+                const endBtn = scope.querySelector('[data-testid=\"voice-call-end\"]') ||
+                               scope.querySelector('[data-testid=\"voice-end-button\"]') ||
+                               document.querySelector('[data-testid=\"voice-call-end\"]') ||
                                document.querySelector('[data-testid=\"voice-end-button\"]');
                 if (endBtn) {
                     endBtn.click();
-                    return { action: 'ended' };
+                    return { action: 'ended', pane: paneId };
                 }
-                const startBtn = document.querySelector('[data-testid=\"voice-start-button\"]');
+                const startBtn = scope.querySelector('[data-testid=\"voice-start-button\"]') ||
+                                 document.querySelector('[data-testid=\"voice-start-button\"]');
                 if (startBtn) {
                     startBtn.click();
-                    return { action: 'started' };
+                    return { action: 'started', pane: paneId };
                 }
-                return { action: 'none' };
+                return { action: 'none', pane: paneId };
             })()
             '''
             await ws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': expr, 'returnByValue': True}}))
             res = await ws.recv()
             val = json.loads(res).get('result', {}).get('result', {}).get('value', {})
             act = val.get('action')
+            pane = val.get('pane', 'default')
             if act == 'ended':
-                print('🛑 Llamada de voz finalizada.')
+                print(f'🛑 Llamada de voz finalizada (panel: {pane}).')
             elif act == 'started':
-                print('🎙️ Llamada de voz iniciada.')
+                print(f'🎙️ Llamada de voz iniciada en el panel activo ({pane}).')
             else:
                 print('ℹ️ No se encontraron botones de control de voz.')
 
@@ -236,14 +268,21 @@ set_sensitivity() {
     "$PYTHON_BIN" -c "
 import json, os
 cfg_path = os.path.expanduser('~/.config/ultron-assistant/config.json')
+SENSITIVITY_MAP = {
+    10: 0.008, 9: 0.015, 8: 0.025, 7: 0.038, 6: 0.050,
+    5: 0.065, 4: 0.085, 3: 0.120, 2: 0.180, 1: 0.250
+}
+lvl = int('$lvl')
+amp = SENSITIVITY_MAP.get(lvl, 0.050)
 cfg = {}
 if os.path.exists(cfg_path):
     try:
         with open(cfg_path) as f: cfg = json.load(f)
     except Exception: pass
-cfg['sensitivity_level'] = int('$lvl')
+cfg['sensitivity_level'] = lvl
+cfg['min_amplitude'] = amp
 with open(cfg_path, 'w') as f: json.dump(cfg, f, indent=2)
-print('✅ Sensibilidad ajustada al Nivel $lvl/10.')
+print(f'✅ Sensibilidad ajustada al Nivel {lvl}/10 (umbral de amplitud: {amp:.3f}).')
 "
     if is_running; then
         echo "Reiniciando Ultrón para aplicar cambios..."

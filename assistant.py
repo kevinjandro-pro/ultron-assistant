@@ -161,7 +161,7 @@ def get_cdp_port():
     return None
 
 def ensure_shortcut_listener():
-    """Inyecta el conmutador bi-direccional Option + Shift + E en la ventana de Antigravity"""
+    """Inyecta el conmutador bi-direccional Option + Shift + E en la ventana de Antigravity con soporte para split panes"""
     port = get_cdp_port()
     if not port:
         return
@@ -180,17 +180,41 @@ def ensure_shortcut_listener():
                     if (window.__ultronKeyHandler) {
                         window.removeEventListener('keydown', window.__ultronKeyHandler, true);
                     }
+
+                    function getTargetChatScope() {
+                        const panes = Array.from(document.querySelectorAll('[data-pane-id]')).filter(p => 
+                            p.querySelector('[data-testid="voice-start-button"]') || 
+                            p.querySelector('[data-testid="voice-call-end"]') ||
+                            p.querySelector('[data-testid="voice-call-controls"]')
+                        );
+                        if (!panes.length) return document;
+                        const focusedPane = panes.find(p => p.contains(document.activeElement));
+                        if (focusedPane) return focusedPane;
+                        const activePane = panes.find(p => !p.hasAttribute('data-pane-unfocused') && !p.closest('[data-pane-unfocused]'));
+                        if (activePane) return activePane;
+                        return panes[0] || document;
+                    }
+
                     window.__ultronKeyHandler = (e) => {
                         if (e.altKey && e.shiftKey && (e.code === 'KeyE' || (e.key && e.key.toLowerCase() === 'e'))) {
                             e.preventDefault();
                             e.stopPropagation();
-                            const endBtn = document.querySelector('[data-testid="voice-call-end"]') ||
+
+                            const scope = getTargetChatScope();
+
+                            // 1. Si hay una llamada de voz activa (en el chat actual o global), finalizarla
+                            const endBtn = scope.querySelector('[data-testid="voice-call-end"]') ||
+                                           scope.querySelector('[data-testid="voice-end-button"]') ||
+                                           document.querySelector('[data-testid="voice-call-end"]') ||
                                            document.querySelector('[data-testid="voice-end-button"]');
                             if (endBtn) {
                                 endBtn.click();
                                 return;
                             }
-                            const startBtn = document.querySelector('[data-testid="voice-start-button"]');
+
+                            // 2. Si no hay llamada activa, iniciar voz en el panel de chat activo
+                            const startBtn = scope.querySelector('[data-testid="voice-start-button"]') ||
+                                             document.querySelector('[data-testid="voice-start-button"]');
                             if (startBtn) {
                                 startBtn.click();
                                 return;
@@ -207,7 +231,7 @@ def ensure_shortcut_listener():
                 await ws.recv()
 
         asyncio.run(_install())
-        print("[✓] Conmutador Option + Shift + E inyectado y activo en Antigravity.", flush=True)
+        print("[✓] Conmutador Option + Shift + E inyectado y activo en Antigravity (soporte split-pane).", flush=True)
     except Exception:
         pass
 
@@ -229,23 +253,39 @@ async def _activate_antigravity_voice_async():
         async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=3.0) as ws:
             activate_expr = '''
                 (() => {
-                    const controls = document.querySelector('[data-testid="voice-call-controls"]');
-                    const startBtn = document.querySelector('[data-testid="voice-start-button"]');
-                    const muteBtn = document.querySelector('[data-testid="voice-mute-button"]');
+                    function getTargetChatScope() {
+                        const panes = Array.from(document.querySelectorAll('[data-pane-id]')).filter(p => 
+                            p.querySelector('[data-testid="voice-start-button"]') || 
+                            p.querySelector('[data-testid="voice-call-end"]') ||
+                            p.querySelector('[data-testid="voice-call-controls"]')
+                        );
+                        if (!panes.length) return document;
+                        const focusedPane = panes.find(p => p.contains(document.activeElement));
+                        if (focusedPane) return focusedPane;
+                        const activePane = panes.find(p => !p.hasAttribute('data-pane-unfocused') && !p.closest('[data-pane-unfocused]'));
+                        if (activePane) return activePane;
+                        return panes[0] || document;
+                    }
+
+                    const scope = getTargetChatScope();
+                    const paneId = (scope.getAttribute && scope.getAttribute('data-pane-id')) || 'default';
+                    const controls = scope.querySelector('[data-testid="voice-call-controls"]') || document.querySelector('[data-testid="voice-call-controls"]');
+                    const startBtn = scope.querySelector('[data-testid="voice-start-button"]') || document.querySelector('[data-testid="voice-start-button"]');
+                    const muteBtn = (controls ? controls.querySelector('[data-testid="voice-mute-button"]') : null) || document.querySelector('[data-testid="voice-mute-button"]');
                     
                     if (!controls && startBtn) {
                         startBtn.click();
-                        return { action: 'clicked_start' };
+                        return { action: 'clicked_start', pane: paneId };
                     }
                     if (controls && muteBtn) {
                         const aria = muteBtn.getAttribute('aria-label') || '';
                         if (aria === 'Unmute mic' || muteBtn.className.includes('bg-red')) {
                             muteBtn.click();
-                            return { action: 'unmuted' };
+                            return { action: 'unmuted', pane: paneId };
                         }
-                        return { action: 'already_active_unmuted' };
+                        return { action: 'already_active_unmuted', pane: paneId };
                     }
-                    return { action: 'no_action_needed' };
+                    return { action: 'no_action_needed', pane: paneId };
                 })()
             '''
             cmd = {'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': activate_expr, 'returnByValue': True}}
@@ -253,8 +293,9 @@ async def _activate_antigravity_voice_async():
             res = await ws.recv()
             val = json.loads(res).get('result', {}).get('result', {}).get('value', {})
             action = val.get('action', 'done')
+            pane_target = val.get('pane', 'default')
             play_chime()
-            return True, action
+            return True, f"{action} (panel: {pane_target})"
             
     except Exception as e:
         print(f"[!] Error conectando con CDP de Antigravity: {e}", flush=True)

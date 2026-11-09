@@ -5,6 +5,7 @@
   "vad_filter": true,
   "beam_size": 1,
   "threads": 2,
-  "min_amplitude": 0.008,
+  "sensitivity_level": 6,
+  "min_amplitude": 0.050,
   "feedback_chime": "/System/Library/Sounds/Glass.aiff"
 }

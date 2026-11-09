@@ -47,11 +47,14 @@ Una vez instalado, controla a Ultrón desde cualquier parte de tu terminal:
 
 ---
 
-## ⌨️ Atajo de Teclado Conmutador (Toggle ON/OFF)
+## ⌨️ Atajo de Teclado Conmutador & Detección de Split (Paneles Divididos)
 
 - **`Option + Shift + E`** (o `Alt + Shift + E`): Funciona como **conmutador bi-direccional**:
-  - Si el modo de voz está **apagado**, presionar la combinación **inicia** la llamada.
+  - Si el modo de voz está **apagado**, presionar la combinación **inicia** la llamada en el chat donde estás trabajando.
   - Si el modo de voz está **activo**, presionar la combinación **cierra/finaliza** la llamada en el botón rojo **"End"**.
+- **Soporte Inteligente de Split (Chats Divididos)**:
+  - Antigravity permite abrir múltiples chats en paralelo o apilados, poniendo los inactivos en modo reposo (`data-pane-unfocused`).
+  - Ultrón detecta en tiempo real cuál es el chat activo (por foco de cursor o estado activo) y dirige tanto la palabra clave (`"Hey Ultrón"`) como el conmutador (`Option + Shift + E`) **exactamente a la ventana o división que estás usando**, sin cruzarse con los chats en reposo.
 - Se inyecta automáticamente de forma persistente en Antigravity y no interfiere con la escritura.
 
 ---
@@ -68,7 +71,8 @@ Puedes ajustar la sensibilidad o cambiar las palabras clave en `~/.config/ultron
   "vad_filter": true,
   "beam_size": 1,
   "threads": 2,
-  "min_amplitude": 0.008,
+  "sensitivity_level": 6,
+  "min_amplitude": 0.050,
   "feedback_chime": "/System/Library/Sounds/Glass.aiff"
 }
 ```
