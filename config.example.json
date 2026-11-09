@@ -7,5 +7,6 @@
   "threads": 2,
   "sensitivity_level": 6,
   "min_amplitude": 0.050,
+  "idle_timeout_minutes": 15,
   "feedback_chime": "/System/Library/Sounds/Glass.aiff"
 }

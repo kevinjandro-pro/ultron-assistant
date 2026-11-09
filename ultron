@@ -87,6 +87,7 @@ except Exception: pass
 show_status() {
     local sens="6/10"
     local amp="0.050"
+    local idle_to="15"
     if [ -f "$CONFIG_PATH" ]; then
         local info=$("$PYTHON_BIN" -c "
 import json
@@ -94,12 +95,20 @@ try:
     cfg = json.load(open('$CONFIG_PATH'))
     lvl = cfg.get('sensitivity_level', 6)
     amp = cfg.get('min_amplitude', 0.050)
-    print(f'{lvl}|{amp:.3f}')
+    ito = cfg.get('idle_timeout_minutes', 15)
+    print(f'{lvl}|{amp:.3f}|{ito}')
 except Exception:
-    print('6|0.050')
+    print('6|0.050|15')
 " 2>/dev/null)
         sens="$(echo "$info" | cut -d'|' -f1)/10"
         amp="$(echo "$info" | cut -d'|' -f2)"
+        idle_to="$(echo "$info" | cut -d'|' -f3)"
+    fi
+
+    local suspended="false"
+    local state_file="$CONFIG_DIR/state.json"
+    if [ -f "$state_file" ]; then
+        suspended=$("$PYTHON_BIN" -c "import json; print(str(json.load(open('$state_file')).get('suspended', False)).lower())" 2>/dev/null)
     fi
 
     local overlay_status="⚪ Inactivo"
@@ -112,17 +121,31 @@ except Exception:
         local cpu=$(ps -p "$pid" -o %cpu | tail -n 1 | tr -d ' ')
         local mem=$(ps -p "$pid" -o %mem | tail -n 1 | tr -d ' ')
         local etime=$(ps -p "$pid" -o etime | tail -n 1 | tr -d ' ')
-        echo "=========================================="
-        echo " 🟢 ESTADO: ULTRÓN ESTÁ ACTIVO Y ESCUCHANDO"
-        echo "=========================================="
-        echo " • PID del proceso : $pid"
-        echo " • Tiempo activo   : $etime"
-        echo " • Uso de CPU / RAM: ${cpu}% CPU / ${mem}% RAM"
-        echo " • Sensibilidad    : Nivel $sens (Umbral de amplitud: $amp)"
-        echo " • Overlay visual  : $overlay_status"
-        echo " • Palabra clave   : 'Hey Ultrón' / 'Ultrón'"
-        echo " • Atajo teclado   : Option + Shift + E (Conmutador ON/OFF split-aware)"
-        echo " • Modo ejecución  : En segundo plano"
+        if [ "$suspended" = "true" ]; then
+            echo "=========================================="
+            echo " 🟡 ESTADO: ULTRÓN EN REPOSO ECOLÓGICO"
+            echo "=========================================="
+            echo " • PID del proceso : $pid"
+            echo " • Modo actual     : Micrófono liberado por inactividad (> ${idle_to} min)"
+            echo " • Ahorro batería  : macOS libre para entrar en reposo profundo sin bloqueos"
+            echo " • Reactivación    : Automática al usar la Mac (teclado/trackpad/atajo)"
+            echo " • Ciclo recurrente: Se reactiva un nuevo ciclo de ${idle_to} min al volver a interactuar"
+            echo " • Overlay visual  : $overlay_status"
+            echo " • Atajo teclado   : Option + Shift + E"
+        else
+            echo "=========================================="
+            echo " 🟢 ESTADO: ULTRÓN ESTÁ ACTIVO Y ESCUCHANDO"
+            echo "=========================================="
+            echo " • PID del proceso : $pid"
+            echo " • Tiempo activo   : $etime"
+            echo " • Uso de CPU / RAM: ${cpu}% CPU / ${mem}% RAM"
+            echo " • Sensibilidad    : Nivel $sens (Umbral de amplitud: $amp)"
+            echo " • Auto-suspensión : ${idle_to} min de inactividad (Ciclo recurrente para cuidar batería)"
+            echo " • Overlay visual  : $overlay_status"
+            echo " • Palabra clave   : 'Hey Ultrón' / 'Ultrón'"
+            echo " • Atajo teclado   : Option + Shift + E (Conmutador ON/OFF split-aware)"
+            echo " • Modo ejecución  : En segundo plano"
+        fi
         echo "------------------------------------------"
         echo "Para desactivarlo  : ultron off"
         echo "Para ver registros : ultron logs"

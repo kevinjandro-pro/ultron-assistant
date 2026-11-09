@@ -58,6 +58,7 @@ DEFAULT_CONFIG = {
     "threads": 2,
     "sensitivity_level": 6,
     "min_amplitude": 0.050,
+    "idle_timeout_minutes": 15,
     "cooldown_seconds": 3.5,
     "feedback_chime": "/System/Library/Sounds/Glass.aiff"
 }
@@ -310,8 +311,8 @@ def activate_antigravity_voice():
     except Exception as e:
         return False, str(e)
 
-def update_state(voice_active=None, ultron_running=None):
-    state = {"voice_active": False, "ultron_running": True}
+def update_state(voice_active=None, ultron_running=None, suspended=None):
+    state = {"voice_active": False, "ultron_running": True, "suspended": False}
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -322,6 +323,8 @@ def update_state(voice_active=None, ultron_running=None):
         state["voice_active"] = bool(voice_active)
     if ultron_running is not None:
         state["ultron_running"] = bool(ultron_running)
+    if suspended is not None:
+        state["suspended"] = bool(suspended)
     state["updated_at"] = time.time()
     try:
         tmp_file = STATE_FILE + ".tmp"
@@ -395,6 +398,26 @@ async def _check_antigravity_voice_active():
     except Exception:
         return False
 
+def get_system_idle_seconds():
+    try:
+        out = subprocess.check_output(['ioreg', '-c', 'IOHIDSystem'], timeout=1.0).decode('utf-8', errors='ignore')
+        m = re.search(r'\"HIDIdleTime\" = (\d+)', out)
+        if m:
+            return int(m.group(1)) / 1_000_000_000.0
+    except Exception:
+        pass
+    return 0.0
+
+def is_clamshell_closed():
+    try:
+        out = subprocess.check_output(['ioreg', '-r', '-k', 'AppleClamshellState'], timeout=1.0).decode('utf-8', errors='ignore')
+        m = re.search(r'\"AppleClamshellState\"\s*=\s*(Yes|No)', out)
+        if m:
+            return m.group(1) == "Yes"
+    except Exception:
+        pass
+    return False
+
 def start_ffmpeg_pipe(mic_device):
     cmd = [
         FFMPEG_BIN, "-loglevel", "error",
@@ -409,7 +432,7 @@ def main():
         f.write(str(os.getpid()))
         
     print("[*] Ultrón. Control de voz (Segundo plano) iniciado...", flush=True)
-    update_state(voice_active=False, ultron_running=True)
+    update_state(voice_active=False, ultron_running=True, suspended=False)
     ensure_shortcut_listener()
     ensure_overlay_running()
     mic_device = get_best_audio_device()
@@ -426,6 +449,8 @@ def main():
     audio_ring = collections.deque(maxlen=BUFFER_SAMPLES)
     ring_lock = threading.Lock()
     running = True
+    is_suspended = False
+    current_voice_active = False
 
     def handle_signal(sig, frame):
         nonlocal running
@@ -438,8 +463,11 @@ def main():
     current_proc = start_ffmpeg_pipe(mic_device)
 
     def audio_reader_thread():
-        nonlocal current_proc, running
+        nonlocal current_proc, running, is_suspended
         while running:
+            if is_suspended or current_proc is None:
+                time.sleep(0.5)
+                continue
             if current_proc and current_proc.stdout:
                 try:
                     data = current_proc.stdout.read(3200) # 0.1s
@@ -458,7 +486,7 @@ def main():
     t.start()
 
     def state_monitor_thread():
-        nonlocal running
+        nonlocal running, current_voice_active
         current_state = False
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -466,6 +494,7 @@ def main():
             time.sleep(0.6)
             try:
                 active = loop.run_until_complete(_check_antigravity_voice_active())
+                current_voice_active = active
                 if active != current_state:
                     current_state = active
                     update_state(voice_active=active)
@@ -479,17 +508,65 @@ def main():
     sens_level = CONFIG.get("sensitivity_level", 6)
     min_amp = SENSITIVITY_MAP.get(sens_level, CONFIG.get("min_amplitude", 0.050))
     cooldown_secs = CONFIG.get("cooldown_seconds", 3.5)
+    idle_timeout_minutes = CONFIG.get("idle_timeout_minutes", 15)
+    idle_timeout_seconds = max(60, int(idle_timeout_minutes * 60))
     print(f"[✓] Centinela activo. Sensibilidad: Nivel {sens_level}/10 (umbral {min_amp:.3f}).", flush=True)
+    print(f"    Auto-suspensión ecológica tras {idle_timeout_minutes} min de inactividad (libera micrófono para permitir suspensión de macOS).", flush=True)
     print(f"    Di 'Hey Ultrón' o presiona 'Option + Shift + E' para alternar la voz.", flush=True)
 
     try:
         last_eval_time = time.time()
         last_heartbeat = time.time()
+        last_idle_check = time.time()
         cooldown_until = 0.0
 
         while running:
             time.sleep(0.15)
-            
+            now = time.time()
+
+            # Gestión inteligente de reposo e inactividad (protección de batería y hardware)
+            if now - last_idle_check >= 1.5:
+                last_idle_check = now
+                idle_secs = get_system_idle_seconds()
+                clamshell = is_clamshell_closed()
+
+                should_suspend = (clamshell or idle_secs >= idle_timeout_seconds) and not current_voice_active
+
+                if should_suspend and not is_suspended:
+                    is_suspended = True
+                    update_state(suspended=True)
+                    motivo = "tapa de MacBook cerrada" if clamshell else f"{idle_secs/60.0:.1f}m de inactividad"
+                    print(f"[*] Reposo ecológico activado ({motivo}). Micrófono liberado para permitir suspensión del sistema.", flush=True)
+                    if current_proc:
+                        try:
+                            current_proc.terminate()
+                            current_proc.wait(timeout=1.0)
+                        except Exception:
+                            try:
+                                current_proc.kill()
+                            except Exception:
+                                pass
+                        current_proc = None
+                    with ring_lock:
+                        audio_ring.clear()
+
+                elif is_suspended:
+                    # Reactivar si el usuario interactuó con la Mac (< 15s de inactividad) o se inició voz
+                    if not clamshell and (idle_secs < 15.0 or current_voice_active):
+                        is_suspended = False
+                        update_state(suspended=False)
+                        mic_device = get_best_audio_device()
+                        current_proc = start_ffmpeg_pipe(mic_device)
+                        with ring_lock:
+                            audio_ring.clear()
+                        last_heartbeat = time.time()
+                        last_eval_time = time.time()
+                        print(f"[✓] Actividad detectada. Ultrón reactivado y escuchando en segundo plano (nuevo ciclo de {idle_timeout_minutes}m iniciado).", flush=True)
+
+            if is_suspended:
+                time.sleep(0.5)
+                continue
+
             with ring_lock:
                 buf_len = len(audio_ring)
                 if buf_len < int(SAMPLE_RATE * 1.0):
@@ -547,7 +624,7 @@ def main():
 
     finally:
         running = False
-        update_state(voice_active=False, ultron_running=False)
+        update_state(voice_active=False, ultron_running=False, suspended=False)
         stop_overlay()
         if current_proc:
             try:
