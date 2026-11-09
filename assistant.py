@@ -75,7 +75,7 @@ EXCLUDE_KEYWORDS = ["mts", "speaker", "parlante", "caixa", "nexus", "hdmi", "dis
 INTERNAL_KEYWORDS = ["macbook", "built-in", "embutido", "interno", "micrófono", "microfone"]
 
 WAKE_PATTERN = re.compile(
-    r'\b(hey|ey|oye|hola|ok|oigan|qué pasa|que pasa|qué tal|que tal)?\s*(ultr[oó]n|el\s*tr[oó]n|oltr[oó]n|altr[oó]n|utr[oó]n|eltr[oó]n|ultrom|outron|el\s*dr[oó]n)\b',
+    r'\b(hey|ey|oye|hola|ok)\s+(ultr[oó]n|el\s*tr[oó]n|oltr[oó]n|altr[oó]n|utr[oó]n|eltr[oó]n)\b',
     re.IGNORECASE
 )
 
@@ -347,7 +347,7 @@ def main():
                     audio_data,
                     language="es",
                     beam_size=CONFIG.get("beam_size", 1),
-                    initial_prompt="Hey Ultrón, asistente inteligente.",
+                    initial_prompt=None,
                     vad_filter=CONFIG.get("vad_filter", True)
                 )
                 text = " ".join([s.text for s in segments]).strip().lower()
@@ -356,9 +356,7 @@ def main():
                 if clean_text:
                     print(f"[Escuchado]: '{clean_text}' (MaxAmp: {max_amp:.4f})", flush=True)
                 
-                is_match = bool(WAKE_PATTERN.search(clean_text)) or (
-                    "tron" in clean_text and any(g in clean_text for g in ["hey", "ey", "oye", "hola", "el", "al", "que"])
-                ) or bool(re.search(r'\b(hey|ey|oye|hola|qué pasa|que pasa)\s+(ladr[oó]n|dron)\b', clean_text))
+                is_match = bool(WAKE_PATTERN.search(clean_text))
                 
                 if is_match:
                     print(f"[!] ¡WAKE-WORD DETECTADA ('{clean_text}')! Activando voz de Antigravity...", flush=True)
