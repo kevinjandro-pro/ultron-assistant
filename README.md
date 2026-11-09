@@ -37,19 +37,22 @@ Una vez instalado, controla a Ultrón desde cualquier parte de tu terminal:
 | :--- | :--- |
 | `ultron on` | Inicia la escucha en segundo plano como centinela invisible. |
 | `ultron off` | Detiene el centinela por completo y libera el micrófono. |
-| `ultron end` | Finaliza inmediatamente la llamada de voz activa en Antigravity. |
-| `ultron status` | Muestra estado en tiempo real, PID, tiempo activo y consumo de CPU/RAM. |
+| `ultron toggle` | Alterna (Inicia o Finaliza) la voz en Antigravity. |
+| `ultron end` | Finaliza inmediatamente la llamada de voz activa. |
+| `ultron sensitivity <1-10>` | Ajusta el nivel de sensibilidad al ruido (Nivel 6 recomendado). |
+| `ultron status` | Muestra estado en tiempo real, PID, consumo y nivel de sensibilidad. |
 | `ultron logs` | Muestra los últimos eventos y transcripciones de escucha. |
 | `ultron test` | Ejecuta un autodiagnóstico de conexión con Antigravity. |
 | `ultron restart` | Reinicia el centinela. |
 
 ---
 
-## ⌨️ Atajo de Teclado Integrado (Colgar / End Call)
+## ⌨️ Atajo de Teclado Conmutador (Toggle ON/OFF)
 
-- **`Option + Shift + E`** (o `Alt + Shift + E`): Cierra y finaliza de inmediato la sesión de voz pulsando internamente el botón rojo **"End"** (`voice-call-end`) sin colisiones de texto ni confirmaciones.
-- Funciona de forma automática y persistente dentro de la ventana de Antigravity.
-- También puedes asignar el comando `ultron end` a un atajo global de macOS mediante Raycast, Alfred o la app Atajos del sistema.
+- **`Option + Shift + E`** (o `Alt + Shift + E`): Funciona como **conmutador bi-direccional**:
+  - Si el modo de voz está **apagado**, presionar la combinación **inicia** la llamada.
+  - Si el modo de voz está **activo**, presionar la combinación **cierra/finaliza** la llamada en el botón rojo **"End"**.
+- Se inyecta automáticamente de forma persistente en Antigravity y no interfiere con la escritura.
 
 ---
 

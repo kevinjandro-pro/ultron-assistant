@@ -5,6 +5,7 @@ CONFIG_DIR="$HOME/.config/ultron-assistant"
 PID_FILE="$CONFIG_DIR/ultron.pid"
 LOG_FILE="$CONFIG_DIR/assistant.log"
 SCRIPT_PATH="$CONFIG_DIR/assistant.py"
+CONFIG_PATH="$CONFIG_DIR/config.json"
 
 # Usar el Python del entorno virtual aislado si existe
 if [ -f "$CONFIG_DIR/.venv/bin/python3" ]; then
@@ -50,7 +51,7 @@ start_ultron() {
     sleep 1.5
     if is_running; then
         echo "✅ Ultrón INICIADO correctamente en segundo plano (PID $(get_pid))."
-        echo "   Di 'Hey Ultrón' en cualquier momento para hablar."
+        echo "   Di 'Hey Ultrón' o presiona 'Option + Shift + E' para hablar."
     else
         echo "❌ Error al iniciar Ultrón. Revisa los logs con: ultron logs"
     fi
@@ -74,6 +75,12 @@ stop_ultron() {
 }
 
 show_status() {
+    local sens="6/10 (Equilibrada)"
+    if [ -f "$CONFIG_PATH" ]; then
+        local s=$("$PYTHON_BIN" -c "import json; print(json.load(open('$CONFIG_PATH')).get('sensitivity_level', 6))" 2>/dev/null)
+        if [ -n "$s" ]; then sens="$s/10"; fi
+    fi
+
     if is_running; then
         local pid=$(get_pid)
         local cpu=$(ps -p "$pid" -o %cpu | tail -n 1 | tr -d ' ')
@@ -85,16 +92,19 @@ show_status() {
         echo " • PID del proceso : $pid"
         echo " • Tiempo activo   : $etime"
         echo " • Uso de CPU / RAM: ${cpu}% CPU / ${mem}% RAM"
-        echo " • Palabra clave   : 'Hey Ultrón'"
-        echo " • Modo de ejecución: En segundo plano"
+        echo " • Sensibilidad    : Nivel $sens"
+        echo " • Palabra clave   : 'Hey Ultrón' / 'Ultrón'"
+        echo " • Atajo teclado   : Option + Shift + E (Conmutador ON/OFF)"
+        echo " • Modo ejecución  : En segundo plano"
         echo "------------------------------------------"
-        echo "Para desactivarlo: ultron off"
+        echo "Para desactivarlo  : ultron off"
         echo "Para ver registros : ultron logs"
     else
         echo "=========================================="
         echo " ⚪ ESTADO: ULTRÓN ESTÁ DESACTIVADO"
         echo "=========================================="
         echo " No hay ningún proceso de escucha activo ni consumo de recursos."
+        echo " • Sensibilidad config: Nivel $sens"
         echo "------------------------------------------"
         echo "Para activarlo: ultron on"
     fi
@@ -107,6 +117,60 @@ show_logs() {
     else
         echo "No hay archivo de registro disponible aún."
     fi
+}
+
+toggle_voice_call() {
+    "$PYTHON_BIN" -c "
+import urllib.request, json, asyncio, websockets, os
+
+port_file = os.path.expanduser('~/Library/Application Support/Antigravity/DevToolsActivePort')
+if not os.path.exists(port_file):
+    print('❌ Antigravity no está abierto.')
+    exit(1)
+
+with open(port_file) as f: port = int(f.read().splitlines()[0])
+
+try:
+    req = urllib.request.Request(f'http://127.0.0.1:{port}/json')
+    with urllib.request.urlopen(req, timeout=1.5) as resp: targets = json.loads(resp.read().decode())
+    page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
+    if not page:
+        print('❌ No se encontró la ventana activa de Antigravity.')
+        exit(1)
+
+    async def toggle():
+        async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2) as ws:
+            expr = '''
+            (() => {
+                const endBtn = document.querySelector('[data-testid=\"voice-call-end\"]') ||
+                               document.querySelector('[data-testid=\"voice-end-button\"]');
+                if (endBtn) {
+                    endBtn.click();
+                    return { action: 'ended' };
+                }
+                const startBtn = document.querySelector('[data-testid=\"voice-start-button\"]');
+                if (startBtn) {
+                    startBtn.click();
+                    return { action: 'started' };
+                }
+                return { action: 'none' };
+            })()
+            '''
+            await ws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': expr, 'returnByValue': True}}))
+            res = await ws.recv()
+            val = json.loads(res).get('result', {}).get('result', {}).get('value', {})
+            act = val.get('action')
+            if act == 'ended':
+                print('🛑 Llamada de voz finalizada.')
+            elif act == 'started':
+                print('🎙️ Llamada de voz iniciada.')
+            else:
+                print('ℹ️ No se encontraron botones de control de voz.')
+
+    asyncio.run(toggle())
+except Exception as e:
+    print('❌ Error:', e)
+"
 }
 
 end_voice_call() {
@@ -155,6 +219,40 @@ except Exception as e:
 "
 }
 
+set_sensitivity() {
+    local lvl="$1"
+    if [[ -z "$lvl" || ! "$lvl" =~ ^([1-9]|10)$ ]]; then
+        echo "Uso: ultron sensitivity <1-10>"
+        echo ""
+        echo "Escala visual de sensibilidad:"
+        echo "  10: Hipersensible (0.008) -> Capta susurros lejanos o audio bajo"
+        echo "   8: Alta (0.025)"
+        echo "   6: Equilibrada (0.050) [RECOMENDADA] -> Filtra videos de YouTube/Instagram"
+        echo "   5: Moderada (0.065)"
+        echo "   3: Firme (0.120)"
+        echo "   1: Mínima (0.250) -> Solo voz muy alta y cercana"
+        return 1
+    fi
+    "$PYTHON_BIN" -c "
+import json, os
+cfg_path = os.path.expanduser('~/.config/ultron-assistant/config.json')
+cfg = {}
+if os.path.exists(cfg_path):
+    try:
+        with open(cfg_path) as f: cfg = json.load(f)
+    except Exception: pass
+cfg['sensitivity_level'] = int('$lvl')
+with open(cfg_path, 'w') as f: json.dump(cfg, f, indent=2)
+print('✅ Sensibilidad ajustada al Nivel $lvl/10.')
+"
+    if is_running; then
+        echo "Reiniciando Ultrón para aplicar cambios..."
+        stop_ultron
+        sleep 1
+        start_ultron
+    fi
+}
+
 run_test() {
     echo "🔍 Ejecutando autodiagnóstico de Ultrón..."
     if [ ! -f "$PYTHON_BIN" ]; then
@@ -183,8 +281,14 @@ case "$1" in
     off|stop|desactivar|apagar)
         stop_ultron
         ;;
+    toggle|alternar)
+        toggle_voice_call
+        ;;
     end|stop-call|hangup|colgar|cerrar)
         end_voice_call
+        ;;
+    sensitivity|sens|nivel)
+        set_sensitivity "$2"
         ;;
     status|estado|check)
         show_status
@@ -204,14 +308,16 @@ case "$1" in
         if is_running; then
             show_status
         else
-            echo "Uso: ultron {on|off|end|status|logs|test|restart}"
+            echo "Uso: ultron {on|off|toggle|end|sensitivity <1-10>|status|logs|test|restart}"
             echo ""
-            echo "  ultron on      -> Activa a Ultrón en segundo plano"
-            echo "  ultron off     -> Desactiva y detiene a Ultrón por completo"
-            echo "  ultron end     -> Finaliza la llamada de voz activa en Antigravity"
-            echo "  ultron status  -> Muestra el estado y consumo de recursos"
-            echo "  ultron logs    -> Muestra los registros recientes"
-            echo "  ultron test    -> Ejecuta el autodiagnóstico de conexión"
+            echo "  ultron on               -> Activa a Ultrón en segundo plano"
+            echo "  ultron off              -> Desactiva y detiene a Ultrón por completo"
+            echo "  ultron toggle           -> Inicia o finaliza la voz (mismo que Option+Shift+E)"
+            echo "  ultron end              -> Finaliza la llamada de voz activa"
+            echo "  ultron sensitivity <1-10> -> Ajusta la sensibilidad de audio"
+            echo "  ultron status           -> Muestra estado, consumo y nivel de sensibilidad"
+            echo "  ultron logs             -> Muestra los registros recientes"
+            echo "  ultron test             -> Ejecuta el autodiagnóstico de conexión"
         fi
         ;;
 esac

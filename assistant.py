@@ -26,7 +26,26 @@ PID_FILE = os.path.join(CONFIG_DIR, "ultron.pid")
 LOG_FILE = os.path.join(CONFIG_DIR, "assistant.log")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
-# Configuración por defecto
+# Escala visual de sensibilidad (1 al 10):
+# 10: Hipersensible (0.008) -> Capta hasta susurros lejanos o audio muy bajo.
+#  8: Alta (0.025)
+#  6: Equilibrada (0.050) -> Recomendada para ver videos o música sin falsos disparos.
+#  5: Moderada (0.065) -> Voz clara y directa.
+#  3: Firme (0.120)
+#  1: Mínima (0.250) -> Solo voz muy fuerte y cercana.
+SENSITIVITY_MAP = {
+    10: 0.008,
+    9:  0.015,
+    8:  0.025,
+    7:  0.038,
+    6:  0.050,
+    5:  0.065,
+    4:  0.085,
+    3:  0.120,
+    2:  0.180,
+    1:  0.250
+}
+
 DEFAULT_CONFIG = {
     "wake_words": ["hey ultron", "ey ultron", "oye ultron", "hola ultron", "ultron"],
     "mic_preference": "auto",
@@ -34,7 +53,8 @@ DEFAULT_CONFIG = {
     "vad_filter": True,
     "beam_size": 1,
     "threads": 2,
-    "min_amplitude": 0.009,
+    "sensitivity_level": 6,
+    "min_amplitude": 0.050,
     "cooldown_seconds": 3.5,
     "feedback_chime": "/System/Library/Sounds/Glass.aiff"
 }
@@ -69,9 +89,9 @@ FFMPEG_BIN = find_binary("ffmpeg", [
 EXCLUDE_KEYWORDS = ["mts", "speaker", "parlante", "caixa", "nexus", "hdmi", "display", "screen"]
 INTERNAL_KEYWORDS = ["macbook", "built-in", "embutido", "interno", "micrófono", "microfone"]
 
-# Coincidencia precisa que tolera variaciones fonéticas comunes de Whisper ("hay ultrón", "eh ultrón", "un tron", "ultrón")
+# Coincidencia precisa: exige saludo de activación ("hey/oye/hola/ok ultrón") o la palabra "ultrón" exacta
 WAKE_PATTERN = re.compile(
-    r'\b(hey|ey|ay|hay|eh|e\s*y|oye|hola|ok)?\s*(ultr[oó]n|el\s*tr[oó]n|un\s*tr[oó]n|outron|altron)\b',
+    r'\b(hey|ey|ay|hay|eh|oye|hola|ok)\s+(ultr[oó]n|el\s*tr[oó]n)\b|\bultr[oó]n\b',
     re.IGNORECASE
 )
 
@@ -140,8 +160,58 @@ def get_cdp_port():
             pass
     return None
 
+def ensure_shortcut_listener():
+    """Inyecta el conmutador bi-direccional Option + Shift + E en la ventana de Antigravity"""
+    port = get_cdp_port()
+    if not port:
+        return
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/json")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            targets = json.loads(resp.read().decode())
+        page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
+        if not page:
+            return
+        
+        async def _install():
+            async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2.0) as ws:
+                js_code = '''
+                (() => {
+                    if (window.__ultronKeyHandler) {
+                        window.removeEventListener('keydown', window.__ultronKeyHandler, true);
+                    }
+                    window.__ultronKeyHandler = (e) => {
+                        if (e.altKey && e.shiftKey && (e.code === 'KeyE' || (e.key && e.key.toLowerCase() === 'e'))) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const endBtn = document.querySelector('[data-testid="voice-call-end"]') ||
+                                           document.querySelector('[data-testid="voice-end-button"]');
+                            if (endBtn) {
+                                endBtn.click();
+                                return;
+                            }
+                            const startBtn = document.querySelector('[data-testid="voice-start-button"]');
+                            if (startBtn) {
+                                startBtn.click();
+                                return;
+                            }
+                        }
+                    };
+                    window.addEventListener('keydown', window.__ultronKeyHandler, true);
+                    window.__ultronKeyHandlerInstalled = true;
+                })()
+                '''
+                await ws.send(json.dumps({'id': 1, 'method': 'Page.addScriptToEvaluateOnNewDocument', 'params': {'source': js_code}}))
+                await ws.recv()
+                await ws.send(json.dumps({'id': 2, 'method': 'Runtime.evaluate', 'params': {'expression': js_code}}))
+                await ws.recv()
+
+        asyncio.run(_install())
+        print("[✓] Conmutador Option + Shift + E inyectado y activo en Antigravity.", flush=True)
+    except Exception:
+        pass
+
 async def _activate_antigravity_voice_async():
-    # Nota: NO usamos osascript para activar la ventana para no robar el foco de lo que hace el usuario
     port = get_cdp_port()
     if not port:
         print("[!] No se pudo obtener el puerto CDP de Antigravity.", flush=True)
@@ -175,7 +245,7 @@ async def _activate_antigravity_voice_async():
                         }
                         return { action: 'already_active_unmuted' };
                     }
-                    return { action: 'no_controls_found' };
+                    return { action: 'no_action_needed' };
                 })()
             '''
             cmd = {'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': activate_expr, 'returnByValue': True}}
@@ -189,47 +259,6 @@ async def _activate_antigravity_voice_async():
     except Exception as e:
         print(f"[!] Error conectando con CDP de Antigravity: {e}", flush=True)
         return False, str(e)
-
-def ensure_shortcut_listener():
-    port = get_cdp_port()
-    if not port:
-        return
-    try:
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/json")
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            targets = json.loads(resp.read().decode())
-        page = next((t for t in targets if t.get('type') == 'page' and not t.get('url', '').startswith('data:')), None)
-        if not page:
-            return
-        
-        async def _install():
-            async with websockets.connect(page['webSocketDebuggerUrl'], open_timeout=2.0) as ws:
-                js_code = '''
-                (() => {
-                    if (window.__ultronKeyHandlerInstalled) return;
-                    window.__ultronKeyHandlerInstalled = true;
-                    window.addEventListener('keydown', (e) => {
-                        if (e.altKey && e.shiftKey && (e.code === 'KeyE' || (e.key && e.key.toLowerCase() === 'e'))) {
-                            const endBtn = document.querySelector('[data-testid="voice-call-end"]') ||
-                                           document.querySelector('[data-testid="voice-end-button"]');
-                            if (endBtn) {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                endBtn.click();
-                            }
-                        }
-                    }, true);
-                })()
-                '''
-                await ws.send(json.dumps({'id': 1, 'method': 'Page.addScriptToEvaluateOnNewDocument', 'params': {'source': js_code}}))
-                await ws.recv()
-                await ws.send(json.dumps({'id': 2, 'method': 'Runtime.evaluate', 'params': {'expression': js_code}}))
-                await ws.recv()
-
-        asyncio.run(_install())
-        print("[✓] Atajo Option + Shift + E inyectado y activo en Antigravity.", flush=True)
-    except Exception:
-        pass
 
 def activate_antigravity_voice():
     try:
@@ -297,9 +326,11 @@ def main():
     t = threading.Thread(target=audio_reader_thread, daemon=True)
     t.start()
 
-    min_amp = CONFIG.get("min_amplitude", 0.009)
+    sens_level = CONFIG.get("sensitivity_level", 6)
+    min_amp = SENSITIVITY_MAP.get(sens_level, CONFIG.get("min_amplitude", 0.050))
     cooldown_secs = CONFIG.get("cooldown_seconds", 3.5)
-    print(f"[✓] Centinela activo y escuchando. Di 'Hey Ultrón' o 'Ultrón'.", flush=True)
+    print(f"[✓] Centinela activo. Sensibilidad: Nivel {sens_level}/10 (umbral {min_amp:.3f}).", flush=True)
+    print(f"    Di 'Hey Ultrón' o presiona 'Option + Shift + E' para alternar la voz.", flush=True)
 
     try:
         last_eval_time = time.time()
@@ -338,7 +369,7 @@ def main():
                     audio_data,
                     language="es",
                     beam_size=CONFIG.get("beam_size", 1),
-                    initial_prompt="Ultrón.",
+                    initial_prompt=None,
                     vad_filter=CONFIG.get("vad_filter", True)
                 )
                 text = " ".join([s.text for s in segments]).strip().lower()
